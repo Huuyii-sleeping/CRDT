@@ -79,10 +79,10 @@ export class LWWMap<T> {
   }
 
   delete(key: string) {
-    this.#data.get(key)?.set(null)
+    this.#data.get(key)?.set(null);
   }
 
-  has(key: string){
-    return this.#data.get(key)?.value !== null
+  has(key: string) {
+    return this.#data.get(key)?.value !== null;
   }
 }
