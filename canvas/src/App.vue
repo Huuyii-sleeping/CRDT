@@ -12,6 +12,8 @@
 import { onMounted } from "vue";
 import type { RGB } from "./types/pixelData";
 import { PixelEditor } from "./types/pixelEditor";
+import { globalUuidTable } from "./types/utils";
+import { serializeState } from "./middleware/collabMiddleware";
 
 onMounted(() => {
   // get alice's canvas
@@ -33,18 +35,36 @@ onMounted(() => {
   const artboardSize = { w: 100, h: 100 };
 
   // instantiate the two `PixelEditor` classes
-  const alice = new PixelEditor(acanvas, artboardSize);
-  const bob = new PixelEditor(bcanvas, artboardSize);
+  const alicePixelEditor = new PixelEditor(acanvas, artboardSize);
+  const bobPixelEditor = new PixelEditor(bcanvas, artboardSize);
+
+  const alicePixelData = alicePixelEditor.pixelData;
+  const bobPixelData = bobPixelEditor.pixelData;
+
+  globalUuidTable.add(alicePixelData.id);
+  globalUuidTable.add(bobPixelData.id);
 
   // merge the states whenever either editor makes a change
-  alice.onchange = (state) => bob.receive(state);
-  bob.onchange = (state) => alice.receive(state);
+  alicePixelEditor.onchange = (originState) => {
+    const { optimilizedState, uuidTable } = serializeState(
+      originState,
+      alicePixelData.id
+    );
+    bobPixelEditor.receiveOptimized({ optimilizedState, uuidTable });
+  };
+  bobPixelEditor.onchange = (originState) => {
+    const { optimilizedState, uuidTable } = serializeState(
+      originState,
+      alicePixelData.id
+    );
+    alicePixelEditor.receiveOptimized({ optimilizedState, uuidTable });
+  };
 
   // set the color whenever the palette input changes
   palette.oninput = () => {
     const hex = palette.value.substring(1).match(/[\da-f]{2}/g) || [];
     const rgb = hex.map((byte) => parseInt(byte, 16));
-    if (rgb.length === 3) alice.color = bob.color = rgb as RGB;
+    if (rgb.length === 3) alicePixelEditor.color = bobPixelEditor.color = rgb as RGB;
   };
 });
 </script>

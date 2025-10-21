@@ -1,3 +1,4 @@
+import { deserializeState } from "../middleware/collabMiddleware";
 import { ColorUtils, PixelData, type RGB } from "./pixelData";
 
 export class PixelEditor {
@@ -53,6 +54,10 @@ export class PixelEditor {
 
   set hexColor(hexStr: string) {
     this.#color = ColorUtils.hexToRgb(ColorUtils.hexStrToHex(hexStr));
+  }
+
+  get pixelData(): PixelData {
+    return this.#data;
   }
 
   /**
@@ -173,5 +178,13 @@ export class PixelEditor {
   receive(state: PixelData["state"]) {
     this.#data.merge(state);
     this.#draw();
+  }
+
+  receiveOptimized(opt: {
+    optimilizedState: any;
+    uuidTable: Record<number, string>;
+  }) {
+    const originalState = deserializeState(opt.optimilizedState, opt.uuidTable);
+    this.receive(originalState);
   }
 }

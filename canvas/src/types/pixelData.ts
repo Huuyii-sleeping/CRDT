@@ -19,7 +19,7 @@ export class PixelData {
   #data: LWWMap<number>;
 
   constructor(id?: string) {
-    this.id = id || "default_id";
+    this.id = id || crypto.randomUUID();
     this.#data = new LWWMap(this.id, {});
   }
 
