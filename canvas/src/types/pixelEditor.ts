@@ -1,4 +1,4 @@
-import { PixelData, type RGB } from "./pixelData";
+import { ColorUtils, PixelData, type RGB } from "./pixelData";
 
 export class PixelEditor {
   /** The underlying <canvas> element */
@@ -51,6 +51,10 @@ export class PixelEditor {
     this.#color = color;
   }
 
+  set hexColor(hexStr: string) {
+    this.#color = ColorUtils.hexToRgb(ColorUtils.hexStrToHex(hexStr));
+  }
+
   /**
    * Handles events on the canvas.
    * @param e Pointer event from the canvas element.
@@ -59,6 +63,14 @@ export class PixelEditor {
     switch (e.type) {
       case "pointerdown": {
         this.#el.setPointerCapture(e.pointerId);
+        const x = Math.floor(
+          (e.offsetX / this.#el.clientWidth) * this.#artboard.w
+        );
+        const y = Math.floor(
+          (e.offsetY / this.#el.clientHeight) * this.#artboard.h
+        );
+        this.#paint(x, y);
+        this.#prev = [x, y];
         break;
       }
       case "pointermove": {
@@ -91,6 +103,7 @@ export class PixelEditor {
     if (x < 0 || this.#artboard.w <= x) return;
     if (y < 0 || this.#artboard.h <= y) return;
 
+    // 仅仅绘制没有绘制过的像素
     if (!this.#checkPainted(x, y)) this.#data.set(x, y, this.#color);
     let [x0, y0] = this.#prev || [x, y];
     const dx = x - x0;

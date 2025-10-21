@@ -2,12 +2,24 @@ import { LWWMap } from ".";
 
 export type RGB = [red: number, green: number, blue: number];
 
+export namespace ColorUtils {
+  export const rgbToHex = (rgb: RGB): number =>
+    (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
+  export const hexToRgb = (hex: number): RGB => [
+    (hex >> 16) & 0xff,
+    (hex >> 8) & 0xff,
+    hex & 0xff,
+  ];
+  export const hexStrToHex = (hexStr: string): number =>
+    parseInt(hexStr.replace("#", ""), 16);
+}
+
 export class PixelData {
   readonly id: string;
-  #data: LWWMap<RGB>;
+  #data: LWWMap<number>;
 
   constructor(id?: string) {
-    this.id = id || 'default_id';
+    this.id = id || "default_id";
     this.#data = new LWWMap(this.id, {});
   }
 
@@ -31,14 +43,14 @@ export class PixelData {
 
   set(x: number, y: number, value: RGB) {
     const key = PixelData.key(x, y);
-    this.#data.set(key, value);
+    const hex = ColorUtils.rgbToHex(value);
+    this.#data.set(key, hex);
   }
 
   get(x: number, y: number): RGB {
     const key = PixelData.key(x, y);
-
-    const register = this.#data.get(key);
-    return register ?? [255, 255, 255];
+    const hex = this.#data.get(key);
+    return hex !== undefined ? ColorUtils.hexToRgb(hex) : [255, 255, 255];
   }
 
   delete(x: number, y: number) {
