@@ -27,6 +27,14 @@ class Char {
   }
 }
 
+// 记录变更事件类型
+export type TextChangeEvent = {
+  inserted: Array<{ id: Id; value: string }>;
+  deleted: Id[];
+};
+
+export type TextObserver = (event: TextChangeEvent) => void;
+
 export class CRDTText {
   chars: Map<string, Char>;
   clientId: any;
@@ -35,6 +43,7 @@ export class CRDTText {
   end: Char;
   pendingOps: any[];
   processedOps: Set<string>;
+  observers: any[];
   constructor(clientId: string) {
     this.clientId = clientId;
     this.clock = 0;
@@ -47,6 +56,7 @@ export class CRDTText {
     this.chars.set(getIdStr(this.end.id), this.end);
     this.processedOps = new Set();
     this.pendingOps = [];
+    this.observers = [];
   }
 
   generateId(): Id {
@@ -77,7 +87,8 @@ export class CRDTText {
     const originRight = leftChar.right as Id;
     const id = this.generateId();
     const op = { type: "insert", id, value, originLeft, originRight };
-    this.mergeInsert(op);
+    this._applyInsert(op);
+    this._emitChange({ inserted: [{ id, value }], deleted: [] });
     return op;
   }
 
@@ -91,36 +102,43 @@ export class CRDTText {
       return null;
     }
     char.deleted = true;
+    this._emitChange({ inserted: [], deleted: [id] });
     const op = { type: "delete" as const, id };
     return op;
   }
 
-  /**
-   * 实现远程合并操作
-   * @param op
-   */
-  merge(op: any): void {
-    const opKey =
-      op.type === "insert"
-        ? `insert:${getIdStr(op.id)}`
-        : `delete:${getIdStr(op.id)}`;
-
-    if (this.processedOps.has(opKey)) return;
-    this.processedOps.add(opKey);
-
-    try {
-      if (op.type === "insert") {
-        this.mergeInsert(op);
-      } else if (op.type === "delete") {
-        this.mergeDelete(op);
+  applyUpdate(ops: any[]): void {
+    const inserted: Array<{ id: Id; value: string }> = [];
+    const deleted: Id[] = [];
+    for (const op of ops) {
+      const opKey =
+        op.type === "insert"
+          ? `insert:${getIdStr(op.id)}`
+          : `delete:${getIdStr(op.id)}`;
+      if (this.processedOps.has(opKey)) {
+        continue;
       }
-      this.processPendingOps(); // 成功后尝试处理 pending
-    } catch (e) {
-      this.pendingOps.push(op); // 暂存失败操作
+      this.processedOps.add(opKey);
+
+      try {
+        if (op.type === "insert") {
+          this._applyInsert(op);
+          inserted.push({ id: op.id, value: op.value });
+        } else if (op.type === "delete") {
+          this._applyDelete(op);
+          deleted.push(op.id);
+        }
+      } catch (error) {
+        this.pendingOps.push(op);
+      }
     }
+    if (inserted.length > 0 || deleted.length > 0) {
+      this._emitChange({ inserted, deleted });
+    }
+    this._processPendingOps();
   }
 
-  mergeInsert(op: {
+  _applyInsert(op: {
     id: Id;
     value: string;
     originLeft: Id;
@@ -128,14 +146,9 @@ export class CRDTText {
   }): void {
     const idStr = getIdStr(op.id);
     if (this.chars.has(idStr)) return;
-    let current: Char | null = null;
-    if (op.originLeft) {
-      current = this.chars.get(getIdStr(op.originLeft)) || null;
-    }
 
-    if (!current || current.deleted || current.id[0] === "end") {
-      current = this.start;
-    }
+    let current = this.chars.get(getIdStr(op.originLeft)) || this.start;
+    if (current.id[0] === "end" || current.deleted) current = this.start;
 
     while (current.right && current.right[0] !== "end") {
       const next = this.chars.get(getIdStr(current.right));
@@ -144,47 +157,68 @@ export class CRDTText {
       current = next;
     }
 
-    const newRigthId = current.right!;
+    const newRightId = current.right;
     const newChar = new Char(op.id, op.value, op.originLeft, op.originRight);
     newChar.left = current.id;
-    newChar.right = newRigthId;
+    newChar.right = newRightId;
     this.chars.set(idStr, newChar);
     current.right = op.id;
 
-    const newRightChar = this.chars.get(getIdStr(newRigthId));
-    if (newRightChar) {
-      newRightChar.left = op.id;
+    const newRightChar = this.chars.get(getIdStr(newRightId as Id));
+    if (newRightChar) newRightChar.left = op.id;
+  }
+
+  _applyDelete(op: { id: Id }): void {
+    const char = this.chars.get(getIdStr(op.id));
+    if (
+      char &&
+      !char.deleted &&
+      op.id !== this.start.id &&
+      op.id !== this.end.id
+    ) {
+      char.deleted = true;
     }
   }
 
-  mergeDelete(op: { id: Id }): void {
-    const idStr = getIdStr(op.id);
-    const char = this.chars.get(idStr);
-    if (!char) {
-      console.warn("待删除的节点未同步，标记为待处理消息");
-      return;
-    }
-    char.deleted = true;
-  }
-
-  processPendingOps(): void {
-    let progress = true;
-    while (progress && this.pendingOps.length > 0) {
-      progress = false;
+  _processPendingOps(): void {
+    let process = true;
+    while (process && this.pendingOps.length > 0) {
+      process = false;
       const remaining = [];
+      const inserted: Array<{ id: Id; value: string }> = [];
+      const deleted: Id[] = [];
       for (const op of this.pendingOps) {
         try {
           if (op.type === "insert") {
-            this.mergeInsert(op);
+            this._applyInsert(op);
+            inserted.push({ id: op.id, value: op.value });
           } else if (op.type === "delete") {
-            this.mergeDelete(op);
+            this._applyDelete(op);
+            deleted.push(op.id);
           }
-          progress = true;
         } catch (error) {
           remaining.push(op);
         }
       }
+      if (inserted.length > 0 || deleted.length > 0) {
+        this._emitChange({ inserted, deleted });
+      }
       this.pendingOps = remaining;
+    }
+  }
+
+  observe(fn: TextObserver): () => void {
+    this.observers.push(fn);
+    return () => {
+      const idx = this.observers.indexOf(fn);
+      if (idx !== -1) this.observers.splice(idx, 1);
+    };
+  }
+
+  _emitChange(event: TextChangeEvent): void {
+    if (this.observers.length === 0) return;
+    for (const fn of this.observers) {
+      fn(event);
     }
   }
 
