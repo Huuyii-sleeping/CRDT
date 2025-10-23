@@ -14,20 +14,16 @@ class Char {
   left: Id | null;
   right: Id | null;
   deleted: boolean;
-  originClock: number;
-  constructor(
-    id: any,
-    value: any,
-    left: Id | null,
-    right: Id | null,
-    originBlock: number
-  ) {
+  originLeft: Id | null;
+  originRight: Id | null;
+  constructor(id: any, value: any, left: Id | null, right: Id | null) {
     this.id = id;
     this.value = value;
-    this.left = left;
-    this.right = right;
+    this.left = null;
+    this.right = null;
     this.deleted = false;
-    this.originClock = originBlock;
+    this.originLeft = left;
+    this.originRight = right;
   }
 }
 
@@ -37,18 +33,20 @@ export class CRDTText {
   clock: number;
   start: Char;
   end: Char;
+  pendingOps: any[];
   processedOps: Set<string>;
   constructor(clientId: string) {
     this.clientId = clientId;
     this.clock = 0;
     this.chars = new Map();
-    this.start = new Char(["start", 0], "", null, ["end", 0], 0);
-    this.end = new Char(["end", 0], "", ["start", 0], null, 0);
+    this.start = new Char(["start", 0], "", null, null);
+    this.end = new Char(["end", 0], "", null, null);
     this.start.right = this.end.id;
     this.end.left = this.start.id;
     this.chars.set(getIdStr(this.start.id), this.start);
     this.chars.set(getIdStr(this.end.id), this.end);
     this.processedOps = new Set();
+    this.pendingOps = [];
   }
 
   generateId(): Id {
@@ -64,128 +62,102 @@ export class CRDTText {
    */
   insert(
     value: string,
-    leftId: Id = this.start.id
+    originLeft: Id = this.start.id
   ): {
-    type: "insert";
+    type: string;
     id: Id;
     value: string;
-    left: Id;
-    right: Id;
-    clock: number;
+    originLeft: Id;
+    originRight: Id;
   } {
-    const leftIdStr = getIdStr(leftId);
-    const leftChar = this.chars.get(leftIdStr);
-    if (!leftChar) {
-      throw new Error("左侧邻居已经不存在");
+    const leftChar = this.chars.get(getIdStr(originLeft));
+    if (!leftChar || leftChar.deleted) {
+      throw new Error("没有找到合适的位置");
     }
-
-    const newId = this.generateId();
-    const newClock = this.clock - 1;
-
-    const rightId = leftChar.right;
-    if (!rightId) {
-      throw new Error("左侧邻居没有右侧节点");
-    }
-
-    const rightIdStr = getIdStr(rightId);
-    const rightChar = this.chars.get(rightIdStr);
-    if (!rightChar) {
-      throw new Error("右侧邻居不存在");
-    }
-
-    const newChar = new Char(newId, value, leftId, rightId, newClock);
-    this.chars.set(getIdStr(newId), newChar);
-    leftChar.right = newId;
-    rightChar.left = newId;
-    return {
-      type: "insert",
-      id: newId,
-      value,
-      left: leftId,
-      right: rightId,
-      clock: newClock,
-    };
+    const originRight = leftChar.right as Id;
+    const id = this.generateId();
+    const op = { type: "insert", id, value, originLeft, originRight };
+    this.mergeInsert(op);
+    return op;
   }
 
   /**
    * 实现删除的逻辑
    * @param id
    */
-  delete(id: Id): { type: "delete"; id: Id; clock: number } | null {
-    const idStr = getIdStr(id);
-    const char = this.chars.get(idStr);
-    if (!char || char.deleted) return null;
+  delete(id: Id): { type: "delete"; id: Id } | null {
+    const char = this.chars.get(getIdStr(id));
+    if (!char || char.deleted || id === this.start.id || id === this.end.id) {
+      return null;
+    }
     char.deleted = true;
-    return {
-      type: "delete",
-      id: id,
-      clock: this.clock - 1,
-    };
+    const op = { type: "delete" as const, id };
+    return op;
   }
 
   /**
    * 实现远程合并操作
    * @param op
    */
-  merge(op: any) {
-    const opId =
+  merge(op: any): void {
+    const opKey =
       op.type === "insert"
-        ? `${op.id[0]}@${op.id[1]}`
-        : `${op.id[0]}@${op.id[1]}-delete`;
-    if (this.processedOps.has(opId)) return;
-    this.processedOps.add(opId);
-    if (op.type === "insert") {
-      this.mergeInsert(op);
-    } else if (op.type === "delete") {
-      this.mergeDelete(op);
+        ? `insert:${getIdStr(op.id)}`
+        : `delete:${getIdStr(op.id)}`;
+
+    if (this.processedOps.has(opKey)) return;
+    this.processedOps.add(opKey);
+
+    try {
+      if (op.type === "insert") {
+        this.mergeInsert(op);
+      } else if (op.type === "delete") {
+        this.mergeDelete(op);
+      }
+      this.processPendingOps(); // 成功后尝试处理 pending
+    } catch (e) {
+      this.pendingOps.push(op); // 暂存失败操作
     }
   }
 
   mergeInsert(op: {
     id: Id;
     value: string;
-    left: Id;
-    right: Id;
-    clock: number;
-  }) {
+    originLeft: Id;
+    originRight: Id;
+  }): void {
     const idStr = getIdStr(op.id);
-    if (this.chars.get(idStr)) return;
-
-    const leftIdStr = getIdStr(op.left);
-    const rightIdStr = getIdStr(op.right);
-    const leftChar = this.chars.get(leftIdStr);
-    const rightChar = this.chars.get(rightIdStr);
-    if (!leftChar || !rightChar) {
-      console.warn("依赖的邻居节点没有同步，暂存操作");
-      return;
+    if (this.chars.has(idStr)) return;
+    let current: Char | null = null;
+    if (op.originLeft) {
+      current = this.chars.get(getIdStr(op.originLeft)) || null;
     }
 
-    // 处理冲突的问题 Yjs核心逻辑
-    if (leftChar.right !== op.right) {
-      // 当插入的位置存在冲突的时候
-      // 我们找到当时left的实际的右邻居
-      // 拿到两个数据的id作比较，[client, clock] 先根据clock比较
-      let currentRight = leftChar.right;
-      // 顺位替代
-      while (currentRight && compareIds(currentRight, op.right) < 0) {
-        const currentRightChar = this.chars.get(getIdStr(currentRight));
-        if (!currentRightChar || currentRightChar.deleted) break;
-        currentRight = currentRightChar.right;
-      }
-      // 顶上位置
-      op.right = currentRight as Id;
+    if (!current || current.deleted || current.id[0] === "end") {
+      current = this.start;
     }
 
-    // 没有冲突直接添加就行
-    const newChar = new Char(op.id, op.value, op.left, op.right, op.clock);
+    while (current.right && current.right[0] !== "end") {
+      const next = this.chars.get(getIdStr(current.right));
+      if (!next || next.deleted) break;
+      if (compareIds(op.id, next.id) <= 0) break;
+      current = next;
+    }
+
+    const newRigthId = current.right!;
+    const newChar = new Char(op.id, op.value, op.originLeft, op.originRight);
+    newChar.left = current.id;
+    newChar.right = newRigthId;
     this.chars.set(idStr, newChar);
+    current.right = op.id;
 
-    leftChar.right = op.id;
-    const actualRightChar = this.chars.get(getIdStr(op.right));
-    if (actualRightChar) actualRightChar.left = op.id;
+    const newRightChar = this.chars.get(getIdStr(newRigthId));
+    if (newRightChar) {
+      newRightChar.left = op.id;
+    }
   }
 
-  mergeDelete(op: { id: Id; clock: number }): void {
+  mergeDelete(op: { id: Id }): void {
     const idStr = getIdStr(op.id);
     const char = this.chars.get(idStr);
     if (!char) {
@@ -195,17 +167,39 @@ export class CRDTText {
     char.deleted = true;
   }
 
-  toString() {
-    const result: string[] = [];
-    let current: Char | null = this.start;
-    while (current && current.id[0] !== "end") {
-      const nextIdStr = getIdStr(current.right as Id);
-      const nextChar = this.chars.get(nextIdStr);
-      if (!nextChar) break;
-      if (!nextChar.deleted) {
-        result.push(nextChar.value);
+  processPendingOps(): void {
+    let progress = true;
+    while (progress && this.pendingOps.length > 0) {
+      progress = false;
+      const remaining = [];
+      for (const op of this.pendingOps) {
+        try {
+          if (op.type === "insert") {
+            this.mergeInsert(op);
+          } else if (op.type === "delete") {
+            this.mergeDelete(op);
+          }
+          progress = true;
+        } catch (error) {
+          remaining.push(op);
+        }
       }
-      current = nextChar;
+      this.pendingOps = remaining;
+    }
+  }
+
+  toString(): string {
+    const result: string[] = [];
+    let currentId = this.start.id;
+    while (currentId[0] !== "end") {
+      const current = this.chars.get(getIdStr(currentId));
+      if (!current || !current.right) break;
+      const next = this.chars.get(getIdStr(current.right));
+      if (!next) break;
+      if (!next.deleted) {
+        result.push(next.value);
+      }
+      currentId = current.right;
     }
     return result.join("");
   }
