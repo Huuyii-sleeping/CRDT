@@ -85,6 +85,14 @@ export class simpleYArray {
     };
   }
 
+  // 本地的delete方法
+  delete(id: Id): { type: "delete"; id: Id } | null {
+    const char = this.Chars.get(getIdStr(id));
+    if (!char || char.deleted) return null;
+    char.deleted = true;
+    return { type: "delete", id };
+  }
+
   merge(op: any): void {
     try {
       if (op.type === "insert") {
@@ -138,7 +146,10 @@ export class simpleYArray {
 
   mergeDelete(op: { id: Id }): void {
     const char = this.Chars.get(getIdStr(op.id));
-    if (char) char.deleted = true;
+    if (char && !char.deleted) {
+      char.deleted = true;
+      this.processPendingOps();
+    }
   }
 
   // 新增判定机制，将暂时找不到位置的暂存起来
@@ -161,6 +172,23 @@ export class simpleYArray {
         }
       }
       this.pendingOps = remaining;
+    }
+  }
+
+  // GC垃圾回收机制
+  // 这里只是简单的实现，真实的GC需要使用引用计数或者时钟向量复杂的判断
+  garbageCollect(){
+    for (const [key, char] of this.Chars.entries()) {
+      if(char.id === this.start || char.id === this.end) continue
+      if(char.deleted) {
+        const leftChar = this.Chars.get(getIdStr(char.left!))
+        const rightChar = this.Chars.get(getIdStr(char.right!))
+        if(leftChar && rightChar){
+          leftChar.right = char.right
+          rightChar.left = char.left
+        }
+        this.Chars.delete(key)
+      }
     }
   }
 
