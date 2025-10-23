@@ -8,8 +8,6 @@ const opB1 = clientB.insert(clientB.start, "b");
 
 const opA2 = clientA.insert(opA1.id, "c");
 const opB2 = clientB.insert(opB1.id, "d");
-console.log(clientA.toArray())
-console.log(opB1)
 clientA.merge(opB1);
 clientA.merge(opB2);
 clientB.merge(opA1);
