@@ -1,8 +1,9 @@
 import { compareIds, getIdStr, Id } from "../types";
+import { Content } from "./types";
 
 interface Char {
   id: Id;
-  value: any;
+  content: Content | null;
   left: Id | null;
   right: Id | null;
   deleted: boolean;
@@ -15,6 +16,7 @@ export class simpleYArray {
   start: Id;
   end: Id;
   pendingOps: any[] = [];
+  stateVector: Map<string, number>;
   constructor(clientId: string) {
     this.clientId = clientId;
     this.clock = 0;
@@ -25,30 +27,45 @@ export class simpleYArray {
 
     this.Chars.set(getIdStr(this.start), {
       id: this.start,
-      value: null,
+      content: null,
       left: null,
       right: this.end,
       deleted: false,
     });
     this.Chars.set(getIdStr(this.end), {
       id: this.end,
-      value: null,
+      content: null,
       left: this.start,
       right: null,
       deleted: false,
     });
+    this.stateVector = new Map();
+    this.stateVector.set(clientId, 0);
   }
 
   generateId(): Id {
     const id: Id = [this.clientId, this.clock];
     this.clock++;
+    this.stateVector.set(this.clientId, this.clock + 1);
     return id;
+  }
+
+  insertString(leftId: Id, str: string) {
+    return this.insert(leftId, { type: "string", value: str });
+  }
+
+  insertEmbed(leftId: Id, instance: any) {
+    const embedId = instance.id || this.generateId();
+    return this.insert(leftId, {
+      type: "embed",
+      value: { id: embedId, instance: { ...instance, id: embedId } },
+    });
   }
 
   insert(
     leftId: Id = this.start,
-    value: any
-  ): { type: "insert"; id: Id; left: Id; right: Id; value: any } {
+    content: Content
+  ): { type: "insert"; id: Id; left: Id; right: Id; content: Content } {
     const leftStr = getIdStr(leftId);
     const leftChar = this.Chars.get(leftStr);
     if (!leftChar || leftChar.deleted) {
@@ -66,7 +83,7 @@ export class simpleYArray {
 
     const newChar: Char = {
       id: newId,
-      value,
+      content,
       left: leftId,
       right: rightId,
       deleted: false,
@@ -81,7 +98,7 @@ export class simpleYArray {
       id: newId,
       left: leftId,
       right: rightId,
-      value,
+      content,
     };
   }
 
@@ -107,9 +124,29 @@ export class simpleYArray {
     }
   }
 
-  mergeInsert(op: { id: Id; left: Id; right: Id; value: any }): void {
+  mergeInsert(op: { id: Id; left: Id; right: Id; content: Content }): void {
     const opIdStr = getIdStr(op.id);
     if (this.Chars.has(opIdStr)) return;
+
+    const leftChar = this.Chars.get(getIdStr(op.left));
+    const rightChar = this.Chars.get(getIdStr(op.right));
+
+    // 模仿yjs的风格先根据left rigjt进行大致的判断
+    if (leftChar && rightChar && !leftChar.deleted && !rightChar.deleted) {
+      if (compareIds(leftChar?.right as Id, op.right) === 0) {
+        const newChar: Char = {
+          id: op.id,
+          content: op.content,
+          left: op.left,
+          right: op.right,
+          deleted: false,
+        };
+        this.Chars.set(opIdStr, newChar);
+        leftChar.right = op.id;
+        rightChar.left = op.id;
+        return;
+      }
+    }
 
     let currentId = this.start;
     let currentChar = this.Chars.get(getIdStr(currentId));
@@ -127,7 +164,7 @@ export class simpleYArray {
     const newRightId = currentChar?.right;
     const newChar: Char = {
       id: op.id,
-      value: op.value,
+      content: op.content,
       left: currentChar?.id as Id,
       right: newRightId as Id,
       deleted: false,
@@ -161,7 +198,7 @@ export class simpleYArray {
       const remaining = [];
       for (const op of this.pendingOps) {
         try {
-          if (op.type === this.insert) {
+          if (op.type === "insert") {
             this.mergeInsert(op);
           } else if (op.type === "delete") {
             this.mergeDelete(op);
@@ -177,17 +214,17 @@ export class simpleYArray {
 
   // GC垃圾回收机制
   // 这里只是简单的实现，真实的GC需要使用引用计数或者时钟向量复杂的判断
-  garbageCollect(){
+  garbageCollect() {
     for (const [key, char] of this.Chars.entries()) {
-      if(char.id === this.start || char.id === this.end) continue
-      if(char.deleted) {
-        const leftChar = this.Chars.get(getIdStr(char.left!))
-        const rightChar = this.Chars.get(getIdStr(char.right!))
-        if(leftChar && rightChar){
-          leftChar.right = char.right
-          rightChar.left = char.left
+      if (char.id === this.start || char.id === this.end) continue;
+      if (char.deleted) {
+        const leftChar = this.Chars.get(getIdStr(char.left!));
+        const rightChar = this.Chars.get(getIdStr(char.right!));
+        if (leftChar && rightChar) {
+          leftChar.right = char.right;
+          rightChar.left = char.left;
         }
-        this.Chars.delete(key)
+        this.Chars.delete(key);
       }
     }
   }
@@ -200,8 +237,13 @@ export class simpleYArray {
       const currentChar = this.Chars.get(getIdStr(currentId));
       const nextId = currentChar!.right!;
       const nextChar = this.Chars.get(getIdStr(nextId));
+
       if (nextId !== this.end && !nextChar?.deleted) {
-        result.push(nextChar?.value);
+        if (nextChar?.content!.type === "string") {
+          result.push(nextChar.content.value);
+        } else if (nextChar?.content?.type === "embed") {
+          result.push(nextChar.content.value.instance);
+        }
       }
       currentId = nextId;
     }

@@ -1,31 +1,24 @@
 import { simpleYArray } from "./YArray-双向链表实现";
 
-const clientA = new simpleYArray("userA");
-const clientB = new simpleYArray("userB");
+// Client A
+const client1 = new simpleYArray("A");
+let pos = client1.start;
+const opsA = [];
+opsA.push(client1.insertString(pos, "Hello ")); pos = opsA[0].id;
+opsA.push(client1.insertEmbed(pos, { type: "xml-element", tagName: "p" })); pos = opsA[1].id;
+opsA.push(client1.insertString(pos, "!"));
 
-const opA1 = clientA.insert(clientA.start, "a");
-const opB1 = clientB.insert(clientB.start, "b");
+// Client B
+const client2 = new simpleYArray("B");
+pos = client2.start;
+const opsB = [];
+opsB.push(client2.insertString(pos, "World")); pos = opsB[0].id;
+opsB.push(client2.insertEmbed(pos, { type: "xml-element", tagName: "b" }));
 
-const opA2 = clientA.insert(opA1.id, "c");
-const opB2 = clientB.insert(opB1.id, "d");
-clientA.merge(opB1);
-clientA.merge(opB2);
-clientB.merge(opA1);
-clientB.merge(opA2);
+// 交换操作
+for (const op of opsA) client2.merge(op);
+for (const op of opsB) client1.merge(op);
 
-console.log("A排序之后的结果", clientA.toArray());
-console.log("B排序之后的结果", clientB.toArray());
-
-const clientC = new simpleYArray("userC");
-const clientD = new simpleYArray("userD");
-
-const opC1 = clientC.insert(clientC.start, "x");
-const opD1 = clientD.insert(clientD.start, "y");
-const opD2 = clientD.insert(opD1.id, "z");
-
-clientC.merge(opD1);
-clientC.merge(opD2);
-clientD.merge(opC1);
-
-console.log("C排序之后的结果", clientC.toArray());
-console.log("D排序之后的结果", clientD.toArray());
+console.log("Final A:", client1.toArray());
+console.log("Final B:", client2.toArray());
+// 现在应该一致！
