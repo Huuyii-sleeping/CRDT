@@ -55,10 +55,15 @@ export class simpleYArray {
   }
 
   insertEmbed(leftId: Id, instance: any) {
-    const embedId = instance.id || this.generateId();
+    // const embedId = instance.id || this.generateId();
+    // const enrichedInstance = { ...instance, id: embedId };
+    // 注意这里不能直接写展开运算，会丢失类型
+    if (!instance.id) {
+      instance.id = this.generateId();
+    }
     return this.insert(leftId, {
       type: "embed",
-      value: { id: embedId, instance: { ...instance, id: embedId } },
+      value: { id: instance.id, instance: instance },
     });
   }
 
