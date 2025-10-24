@@ -15,7 +15,7 @@ export class XmlElement {
   attribute: YMap;
   children: simpleYArray;
   readonly type = "xml-element";
-  constructor(clientId: string, tagName: string) {
+  constructor(clientId: string, tagName: string, scope?: string) {
     const array = new simpleYArray(clientId); // 临时生成Id
     this.id = array.generateId();
     this.tagName = tagName;

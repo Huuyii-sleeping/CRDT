@@ -3,6 +3,7 @@ import { compareIds, getIdStr, Id } from "../types";
 interface MapEntry {
   value: any;
   id: Id;
+//   deleted: boolean
 }
 
 export type MapChangeEvent = {
@@ -27,6 +28,28 @@ export class YMap {
     this.observers = [];
   }
 
+  getStateVector(): Map<string, number> {
+    const sv = new Map<string, number>();
+    sv.set(this.clientId, this.clock);
+    return sv;
+  }
+
+  getDiff(targetSV: Map<string, number>): any[] {
+    const targetClock = targetSV.get(this.clientId) || 0;
+    const ops: any[] = [];
+    for (const [key, item] of this.entries) {
+      if (item.id[1] >= targetClock) {
+        ops.push({
+          type: "map-set",
+          key,
+          value: item.value,
+          id: item.id,
+        });
+      }
+    }
+    return ops;
+  }
+
   set(
     key: string,
     value: any
@@ -45,6 +68,14 @@ export class YMap {
     this._applyDelete(op);
     this._emitChange({ updated: [], deleted: [key] });
     return op;
+  }
+
+  merge(op: { type: "map-set"; key: string; value: any; id: Id }) {
+    this.entries.set(op.key, {
+      value: op.value,
+      id: op.id,
+    //   deleted: f8alse,
+    });
   }
 
   applyUpdate(ops: any[]): void {

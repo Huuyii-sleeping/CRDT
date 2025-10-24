@@ -43,6 +43,35 @@ export class simpleYArray {
     this.stateVector.set(clientId, 0);
   }
 
+  getStateVector(): Map<string, number> {
+    const sv = new Map<string, number>();
+    sv.set(this.clientId, this.clock);
+    return sv;
+  }
+
+  getDiff(targetSV: Map<string, number>): any[] {
+    const targetClock = targetSV.get(this.clientId) || 0;
+    const opts: any[] = [];
+    for (const char of this.Chars.values()) {
+      if (char.id === this.start || char.id === this.end) continue;
+      const [idClientId, idClock] = char.id;
+      if (
+        idClientId === this.clientId &&
+        idClock >= targetClock &&
+        !char.deleted
+      ) {
+        opts.push({
+          type: "insert",
+          id: char.id,
+          left: char.left,
+          right: char.right,
+          content: char.content,
+        });
+      }
+    }
+    return opts;
+  }
+
   generateId(): Id {
     const id: Id = [this.clientId, this.clock];
     this.clock++;
